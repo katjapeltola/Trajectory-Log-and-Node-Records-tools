@@ -1,10 +1,10 @@
 import pandas as pd 
-import numpy as np
 import os
 
-def clean_Node_Records_csv(path_to_file, save: bool = True):
+def clean_Node_Records_csv(path_to_file, save: bool = True, remove_stationaries: bool = True):
     
-    """Cleans a Node Records csv-file (from COL node) to a contain only primary, secondary and expected values of the leaves in cm. Can either save the cleaned file as csv (default), or return the result as a Pandas DataFrame.
+    """Cleans a Node Records csv-file (from COL node) to a contain only primary, secondary and expected values of the leaves in centimeters (cm). 
+       Can either save the cleaned file as csv (default), or return the result as a Pandas DataFrame.
 
     Parameters
     ----------
@@ -14,21 +14,25 @@ def clean_Node_Records_csv(path_to_file, save: bool = True):
     save : boolean 
         If True (default), saves the cleaned csv-file in the same folder with the original, with _CLEANED added to the filename. 
         If False, does not save anything, but returns the cleaned file as a Pandas DataFrame.
+        
+    remove_stationaries : boolean
+        If True (default), removes stationary data of each leaf and downsamples the data.
+        If False, does not do anything.
 
     Returns (optional)
     -------
     dataframe : df
-        Dataframe containing bank A and B leaves primary, secondary and expected values from your file. 
+        A Pandas dataframe containing bank A and B leaves primary, secondary and expected values from your file. 
         
     """
     
-    df = pd.read_csv(path_to_file, low_memory=False)
+    df = pd.read_csv(path_to_file, low_memory=False) # Reads the csv-file to a dataframe
     
-    dir_name = os.path.dirname(path_to_file)
-    base_name, ext = os.path.splitext(os.path.basename(path_to_file))
+    dir_name = os.path.dirname(path_to_file) # Specifies the directory name 
+    base_name, ext = os.path.splitext(os.path.basename(path_to_file)) 
     
-    new_filename = f"{base_name}_CLEAN{ext}"
-    new_filepath = os.path.join(dir_name, new_filename)
+    new_filename = f"{base_name}_CLEAN{ext}" # Makes the new filename for the saving
+    new_filepath = os.path.join(dir_name, new_filename) # Makes the new file path for the soon to saved csv
 
     # Initialize lists to store the split DataFrames
     split_dfs = []
@@ -81,12 +85,59 @@ def clean_Node_Records_csv(path_to_file, save: bool = True):
     
     bankB.columns = ['Time'] + new_columns
     
-    
     # Combine these and remove first 55 rows
     
     bankB.reset_index(drop=True, inplace=True)
     # Concatenate dataframes side by side
     cleaned_dataframe = pd.concat([bankA, bankB.iloc[:, 1:]], axis=1)
+    
+    if remove_stationaries:
+        # Downsample the DataFrame
+        df_downsampled = cleaned_dataframe.iloc[::2]
+        
+        # Next removing stationary datapoints
+        # We have to go through every column (all 120 of them), and remove non-moving data and construct a new dataframe based on it
+        
+         # Iterate through each instance
+        for i in range(1, 121):
+            # Identify columns for this instance
+            if i == 1: 
+                first_column = df_downsampled.iloc[:, 0]
+                
+                # Creating a new dataframe with only the first column
+                new_df = pd.DataFrame(first_column, columns=['Time'])
+                cols = [f'AExp{i}', f'APrim{i}', f'ASec{i}'] 
+            
+            elif i > 1 and i <= 60:
+                cols = [f'AExp{i}', f'APrim{i}', f'ASec{i}'] 
+                
+            else:
+                cols = [f'BExp{i-60}', f'BPrim{i-60}', f'BSec{i-60}']  
+            
+            # Check for consecutive similarity in the selected columns
+            # Initialize a list to track rows to drop
+            rows_to_drop = []
+            prev_value = None
+            vals_df = pd.DataFrame(df[cols])
+            
+            # Iterate through the rows (assuming rows represent time steps)
+            # Iterate through the 'movement1' column to find rows to drop
+            
+            for idx, value in vals_df[cols[0]].items():
+                if prev_value is not None and value == prev_value:
+                    rows_to_drop.append(idx)
+                prev_value = value
+
+            # Drop rows from 'movement1' where consecutive values are similar
+            vals_df.drop(rows_to_drop, inplace=True)
+            # Concatenate new_df and vals_df
+            new_df = pd.concat([new_df, vals_df], axis=1, ignore_index=False)
+            
+            if save: 
+                new_df.to_csv(new_filepath, index=False)
+                print(f"DataFrame saved in '{new_filepath}'") 
+    else:
+        pass
     
     if save:
         cleaned_dataframe.to_csv(new_filepath, index=False)
@@ -94,3 +145,4 @@ def clean_Node_Records_csv(path_to_file, save: bool = True):
         
     else:
         return cleaned_dataframe
+    
